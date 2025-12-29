@@ -1,5 +1,15 @@
 -- Server-side vehicle spawning logic
 
+-- Helper function for colored chat messages
+local function ReqChatPrint(ply, message, isError)
+    if not IsValid(ply) then return end
+    
+    net.Start("ReqSystem_ColoredChat")
+    net.WriteString(message)
+    net.WriteBool(isError or false)
+    net.Send(ply)
+end
+
 ReqSystem.SpawnedVehicles = ReqSystem.SpawnedVehicles or {}
 ReqSystem.PlayerCooldowns = ReqSystem.PlayerCooldowns or {}
 
@@ -337,9 +347,9 @@ net.Receive("ReqSystem_SpawnVehicle", function(len, ply)
     net.Send(ply)
     
     if success then
-        ply:ChatPrint("[Requisition] " .. message)
+        ReqChatPrint(ply, message)
     else
-        ply:ChatPrint("[Requisition] ERROR: " .. message)
+        ReqChatPrint(ply, message, true)
     end
 end)
 
@@ -350,9 +360,9 @@ net.Receive("ReqSystem_ReturnVehicle", function(len, ply)
     local success, message = ReqSystem:ReturnVehicle(ply, vehicle)
     
     if success then
-        ply:ChatPrint("[Requisition] " .. message)
+        ReqChatPrint(ply, message)
     else
-        ply:ChatPrint("[Requisition] ERROR: " .. message)
+        ReqChatPrint(ply, message, true)
     end
 end)
 

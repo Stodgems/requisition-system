@@ -1,6 +1,17 @@
 -- Server-side database and requisition management
 
+-- Helper function for colored chat messages
+local function ReqChatPrint(ply, message, isError)
+    if not IsValid(ply) then return end
+    
+    net.Start("ReqSystem_ColoredChat")
+    net.WriteString(message)
+    net.WriteBool(isError or false)
+    net.Send(ply)
+end
+
 -- Network strings
+util.AddNetworkString("ReqSystem_ColoredChat")
 util.AddNetworkString("ReqSystem_OpenTerminal")
 util.AddNetworkString("ReqSystem_OpenTerminalAdmin")
 util.AddNetworkString("ReqSystem_OpenGlobalAdmin")
@@ -469,6 +480,13 @@ hook.Add("Initialize", "ReqSystem_Initialize", function()
     ReqSystem:LoadTerminals()
     ReqSystem:LoadVehicles()
     ReqSystem:LoadTerminalVehicles()
+    
+    -- Print startup statistics
+    local terminalCount = table.Count(ReqSystem.Terminals)
+    local vehicleCount = table.Count(ReqSystem.Vehicles)
+    local areaCount = table.Count(ReqSystem.Areas)
+    
+    print("[Requisition System] Loaded: " .. terminalCount .. " terminals, " .. vehicleCount .. " vehicles, " .. areaCount .. " spawn zones")
 end)
 
 -- Send data to player on spawn
@@ -485,7 +503,7 @@ end)
 -- Network receivers
 net.Receive("ReqSystem_OpenGlobalAdmin", function(len, ply)
     if not ReqSystem:IsAdmin(ply) then 
-        ply:ChatPrint("[Requisition] You don't have permission to access the admin menu!")
+        ReqChatPrint(ply, "You don't have permission to access the admin menu!", true)
         return 
     end
     
@@ -675,17 +693,17 @@ end
 -- Network receiver for save command
 net.Receive("ReqSystem_SaveTerminals", function(len, ply)
     if not ReqSystem:IsAdmin(ply) then 
-        ply:ChatPrint("[Requisition] You don't have permission!")
+        ReqChatPrint(ply, "You don't have permission!", true)
         return 
     end
     
     local count = ReqSystem:SaveTerminalsForMap()
-    ply:ChatPrint(string.format("[Requisition] Saved %d terminals for map: %s", count, game.GetMap()))
+    ReqChatPrint(ply, string.format("Saved %d terminals for map: %s", count, game.GetMap()))
     
     -- Broadcast to all admins
     for _, admin in ipairs(player.GetAll()) do
         if ReqSystem:IsAdmin(admin) and admin ~= ply then
-            admin:ChatPrint(string.format("[Requisition] %s saved %d terminals", ply:Nick(), count))
+            ReqChatPrint(admin, string.format("%s saved %d terminals", ply:Nick(), count))
         end
     end
 end)
@@ -792,7 +810,7 @@ end
 -- Console command to wipe database
 concommand.Add("reqsystem_wipe", function(ply, cmd, args)
     if IsValid(ply) then
-        ply:ChatPrint("[Requisition] This command can only be run from the server console!")
+        ReqChatPrint(ply, "This command can only be run from the server console!", true)
         return
     end
     
@@ -804,7 +822,7 @@ end)
 -- Confirmation command
 concommand.Add("reqsystem_wipe_confirm", function(ply, cmd, args)
     if IsValid(ply) then
-        ply:ChatPrint("[Requisition] This command can only be run from the server console!")
+        ReqChatPrint(ply, "This command can only be run from the server console!", true)
         return
     end
     
@@ -815,25 +833,25 @@ end)
 -- Console command to cache vehicle models
 concommand.Add("reqsystem_cache_models", function(ply, cmd, args)
     if IsValid(ply) and not ReqSystem:IsAdmin(ply) then
-        ply:ChatPrint("[Requisition] You don't have permission!")
+        ReqChatPrint(ply, "You don't have permission!", true)
         return
     end
     
-    local msg = "[Requisition System] Caching vehicle models..."
+    local msg = "Caching vehicle models..."
     if IsValid(ply) then
-        ply:ChatPrint(msg)
+        ReqChatPrint(ply, msg)
     else
-        print(msg)
+        print("[Requisition System] " .. msg)
     end
     
     timer.Simple(0.1, function()
         local cached = ReqSystem:CacheAllVehicleModels()
-        local result = string.format("[Requisition System] Cached %d vehicle models", cached)
+        local result = string.format("Cached %d vehicle models", cached)
         
         if IsValid(ply) then
-            ply:ChatPrint(result)
+            ReqChatPrint(ply, result)
         else
-            print(result)
+            print("[Requisition System] " .. result)
         end
     end)
 end)

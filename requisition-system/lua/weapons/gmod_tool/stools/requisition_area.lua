@@ -26,7 +26,7 @@ function TOOL:LeftClick(trace)
     
     local ply = self:GetOwner()
     if not ReqSystem:IsAdmin(ply) then
-        ply:ChatPrint("[Requisition] You must be an admin to use this tool!")
+        ReqChatPrint(ply, "You must be an admin to use this tool!", true)
         return false
     end
     
@@ -39,8 +39,8 @@ function TOOL:LeftClick(trace)
     local ang = math.Round(rawAng / 15) * 15
     self:GetOwner():SetNWFloat("ReqArea_SpawnAngle", ang)
     
-    self:GetOwner():ChatPrint("[Requisition] First corner set at " .. ReqSystem:FormatPosition(pos))
-    self:GetOwner():ChatPrint("[Requisition] Spawn direction: " .. ang .. "° (snapped from " .. math.Round(rawAng) .. "°)")
+    ReqChatPrint(self:GetOwner(), "First corner set at " .. ReqSystem:FormatPosition(pos))
+    ReqChatPrint(self:GetOwner(), "Spawn direction: " .. ang .. "° (snapped from " .. math.Round(rawAng) .. "°)")
     
     -- Check if both corners are set
     local corner2 = self:GetOwner():GetNWVector("ReqArea_Corner2", Vector(0, 0, 0))
@@ -56,14 +56,14 @@ function TOOL:RightClick(trace)
     
     local ply = self:GetOwner()
     if not ReqSystem:IsAdmin(ply) then
-        ply:ChatPrint("[Requisition] You must be an admin to use this tool!")
+        ReqChatPrint(ply, "You must be an admin to use this tool!", true)
         return false
     end
     
     -- Set second corner with height (150 units above ground for vehicles)
     local pos = trace.HitPos + Vector(0, 0, 150)
     self:GetOwner():SetNWVector("ReqArea_Corner2", pos)
-    self:GetOwner():ChatPrint("[Requisition] Second corner set at " .. ReqSystem:FormatPosition(pos))
+    ReqChatPrint(self:GetOwner(), "Second corner set at " .. ReqSystem:FormatPosition(pos))
     
     -- Check if both corners are set
     local corner1 = self:GetOwner():GetNWVector("ReqArea_Corner1", Vector(0, 0, 0))
@@ -84,7 +84,7 @@ function TOOL:Reload(trace)
     self:GetOwner():SetNWVector("ReqArea_Corner1", Vector(0, 0, 0))
     self:GetOwner():SetNWVector("ReqArea_Corner2", Vector(0, 0, 0))
     self:GetOwner():SetNWFloat("ReqArea_SpawnAngle", 0)
-    self:GetOwner():ChatPrint("[Requisition] Selection cleared")
+    ReqChatPrint(self:GetOwner(), "Selection cleared")
     
     return true
 end
@@ -283,7 +283,10 @@ if CLIENT then
                     LocalPlayer():SetNWVector("ReqArea_Corner2", Vector(0, 0, 0))
                     LocalPlayer():SetNWFloat("ReqArea_SpawnAngle", 0)
                     
-                    LocalPlayer():ChatPrint("[Requisition] Spawn area '" .. text .. "' created!")
+                    chat.AddText(
+                        Color(100, 255, 150), "[Requisition] ",
+                        Color(255, 255, 255), "Spawn area '" .. text .. "' created!"
+                    )
                     
                     -- Refresh toolgun panel after a moment
                     timer.Simple(0.5, function()
