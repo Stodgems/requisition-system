@@ -5,6 +5,8 @@
 - **Terminal Entities**: Interactive terminals that players can use to spawn vehicles
 - **Spawn Areas**: Define custom spawn zones using the toolgun with directional spawning
 - **Vehicle Return System**: Return vehicles to terminals when parked in spawn areas
+- **Vehicle Customization**: Players can select skins and bodygroups before spawning
+- **Automatic Model Caching**: LVS/Simfphys vehicle models automatically cached on server start
 - **Admin Management**: Full admin panel for managing vehicles, terminals, and spawn areas
 - **Job & Qualification Restrictions**: Limit vehicle access by job and/or qualifications from the Qualification System
 - **Multi-Vehicle Support**: Compatible with GMod default vehicles, TDM Cars, LVS, and Simfphys vehicles
@@ -107,7 +109,12 @@ Edit `lua/autorun/sh_requisition_config.lua` to customize:
    - Green accent: You can spawn this vehicle
    - Red accent: You don't meet requirements (locked)
 5. Click **Spawn Vehicle** button
-6. Vehicle will spawn at the **center** of the assigned area facing the designated direction
+6. **If the vehicle has skins or bodygroups**, a customization menu appears:
+   - Use **sliders** to select skin number
+   - Use **sliders** to select bodygroup variants
+   - Click **Spawn Vehicle** to confirm
+7. **If no customization options**, vehicle spawns immediately
+8. Vehicle will spawn at the **center** of the assigned area facing the designated direction
 
 #### Returning Vehicles
 1. Park your vehicle in the spawn area where you spawned it
@@ -159,9 +166,10 @@ end
 - `!reqadmin` - Opens the global admin menu
 - `!reqsave` - Saves all terminals for the current map (admin only)
 
-### Server Console Commands
-- `reqsystem_wipe` - Warning prompt to wipe database
-- `reqsystem_wipe_confirm` - Confirms and executes database wipe (IRREVERSIBLE)
+### Console Commands
+- `reqsystem_cache_models` - Manually cache vehicle models for LVS/Simfphys vehicles (admin/console only)
+- `reqsystem_wipe` - Warning prompt to wipe database (console only)
+- `reqsystem_wipe_confirm` - Confirms and executes database wipe (console only, IRREVERSIBLE)
 
 ## Troubleshooting
 
@@ -175,6 +183,12 @@ end
 - Verify you have required qualifications
 - Check if you've hit the vehicle limit
 - Wait for cooldown timer to expire
+
+**Customization menu not appearing?**
+- Vehicle may not have skins or bodygroups
+- For LVS vehicles: Run `reqsystem_cache_models` to cache model paths
+- Check that vehicle has a model stored in the database (check admin menu)
+- Restart server to trigger automatic model caching
 
 **Admin menu not opening?**
 - Verify you're in the admin ranks list in config

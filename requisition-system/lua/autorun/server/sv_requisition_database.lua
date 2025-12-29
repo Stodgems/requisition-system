@@ -690,8 +690,62 @@ net.Receive("ReqSystem_SaveTerminals", function(len, ply)
     end
 end)
 
+-- Cache model for LVS/Simfphys vehicles
+function ReqSystem:CacheVehicleModel(vehicleId, class)
+    -- Spawn entity temporarily to get model
+    local tempEnt = ents.Create(class)
+    if not IsValid(tempEnt) then return nil end
+    
+    tempEnt:SetPos(Vector(0, 0, -10000)) -- Spawn far away
+    tempEnt:Spawn()
+    
+    local model = tempEnt:GetModel()
+    tempEnt:Remove()
+    
+    if model and model ~= "" and model ~= "models/error.mdl" then
+        -- Update vehicle in database with model
+        local vehiclesTable = self.Config.Tables.vehicles
+        local query = string.format("UPDATE %s SET model = %s WHERE id = %d",
+            vehiclesTable, sql.SQLStr(model), vehicleId)
+        sql.Query(query)
+        
+        return model
+    end
+    
+    return nil
+end
+
+-- Cache models for all vehicles with empty model field
+function ReqSystem:CacheAllVehicleModels()
+    local cached = 0
+    
+    for id, veh in pairs(self.Vehicles) do
+        if not veh.model or veh.model == "" then
+            local model = self:CacheVehicleModel(id, veh.class)
+            if model then
+                veh.model = model
+                cached = cached + 1
+            end
+        end
+    end
+    
+    if cached > 0 then
+        -- Reload vehicles to get updated models
+        self:LoadVehicles()
+        self:SyncVehiclesToClients()
+    end
+    
+    return cached
+end
+
 -- Auto-load saved terminals on map start
 hook.Add("InitPostEntity", "ReqSystem_LoadSavedTerminals", function()
+    -- Cache vehicle models first
+    timer.Simple(1, function()
+        local cached = ReqSystem:CacheAllVehicleModels()
+    end)
+    
+    -- Then load saved terminals
     timer.Simple(2, function()
         local count = ReqSystem:LoadSavedTerminals()
         if count > 0 then
@@ -756,6 +810,32 @@ concommand.Add("reqsystem_wipe_confirm", function(ply, cmd, args)
     
     print("[Requisition System] Wiping database...")
     ReqSystem:WipeDatabase()
+end)
+
+-- Console command to cache vehicle models
+concommand.Add("reqsystem_cache_models", function(ply, cmd, args)
+    if IsValid(ply) and not ReqSystem:IsAdmin(ply) then
+        ply:ChatPrint("[Requisition] You don't have permission!")
+        return
+    end
+    
+    local msg = "[Requisition System] Caching vehicle models..."
+    if IsValid(ply) then
+        ply:ChatPrint(msg)
+    else
+        print(msg)
+    end
+    
+    timer.Simple(0.1, function()
+        local cached = ReqSystem:CacheAllVehicleModels()
+        local result = string.format("[Requisition System] Cached %d vehicle models", cached)
+        
+        if IsValid(ply) then
+            ply:ChatPrint(result)
+        else
+            print(result)
+        end
+    end)
 end)
 
 -- Server-side database loaded

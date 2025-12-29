@@ -655,38 +655,26 @@ function ReqSystem:OpenVehicleEditor(parent, vehicleId)
         -- Get the spawn menu key from the combo box's selected data
         local _, _, spawnMenuKey = classCombo:GetSelected()
         
-        print("[DEBUG] Save clicked - GetSelected returned:", spawnMenuKey)
-        print("[DEBUG] GetValue returns:", classCombo:GetValue())
-        
         -- Fallback to GetValue if GetSelected doesn't work
         if not spawnMenuKey or spawnMenuKey == "" then
             local displayName = classCombo:GetValue()
             -- Try to convert display name to spawn key
             spawnMenuKey = displayNameToKey[displayName] or displayName
-            print("[DEBUG] Converted display name to key:", displayName, "->", spawnMenuKey)
         end
-        
-        print("[DEBUG] Final spawnMenuKey:", spawnMenuKey)
-        print("[DEBUG] vehicleList count:", #vehicleList)
         
         -- Find the vehicle data from our list
         local selectedVehicle = nil
         for _, veh in ipairs(vehicleList) do
-            print("[DEBUG] Checking:", veh.spawnMenuKey, "against", spawnMenuKey)
             if veh.spawnMenuKey == spawnMenuKey then
                 selectedVehicle = veh
-                print("[DEBUG] Found match!")
                 break
             end
         end
         
         if not selectedVehicle then
-            print("[DEBUG] No vehicle found in list")
             Derma_Message("Please select a vehicle from the dropdown!", "Error", "OK")
             return
         end
-        
-        print("[DEBUG] Selected vehicle:", selectedVehicle.name, "class:", selectedVehicle.class)
         
         local vehicleInfo = {
             name = nameEntry:GetValue(),

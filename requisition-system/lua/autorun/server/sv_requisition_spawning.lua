@@ -134,8 +134,12 @@ function ReqSystem:FindSpawnPosition(area)
 end
 
 -- Spawn vehicle for player
-function ReqSystem:SpawnVehicle(ply, terminalId, vehicleId)
+function ReqSystem:SpawnVehicle(ply, terminalId, vehicleId, skin, bodygroups)
     if not IsValid(ply) then return false, "Invalid player" end
+    
+    -- Default values for skin and bodygroups
+    skin = skin or 0
+    bodygroups = bodygroups or {}
     
     -- Get terminal data
     local terminal = self.Terminals[terminalId]
@@ -202,6 +206,18 @@ function ReqSystem:SpawnVehicle(ply, terminalId, vehicleId)
     
     vehicle:Spawn()
     vehicle:Activate()
+    
+    -- Apply skin
+    if skin and skin > 0 then
+        vehicle:SetSkin(skin)
+    end
+    
+    -- Apply bodygroups
+    if bodygroups and next(bodygroups) then
+        for bgId, bgValue in pairs(bodygroups) do
+            vehicle:SetBodygroup(bgId, bgValue)
+        end
+    end
     
     -- Set owner
     if vehicle.CPPISetOwner then
@@ -309,8 +325,10 @@ end
 net.Receive("ReqSystem_SpawnVehicle", function(len, ply)
     local terminalId = net.ReadInt(32)
     local vehicleId = net.ReadInt(32)
+    local skin = net.ReadInt(8)
+    local bodygroups = net.ReadTable()
     
-    local success, message = ReqSystem:SpawnVehicle(ply, terminalId, vehicleId)
+    local success, message = ReqSystem:SpawnVehicle(ply, terminalId, vehicleId, skin, bodygroups)
     
     -- Send response back to client
     net.Start("ReqSystem_SpawnVehicle")

@@ -326,13 +326,8 @@ function ReqSystem:OpenTerminalUI(terminalId, areaName, vehicles)
         end
         
         spawnBtn.DoClick = function()
-            -- Request vehicle spawn
-            net.Start("ReqSystem_SpawnVehicle")
-            net.WriteInt(terminalId, 32)
-            net.WriteInt(vehicle.id, 32)
-            net.SendToServer()
-            
-            frame:Close()
+            -- Always try to open customization menu (will detect model from entity class)
+            self:OpenVehicleCustomization(terminalId, vehicle, frame)
         end
         
         y = y + 125
@@ -349,6 +344,192 @@ function ReqSystem:OpenTerminalUI(terminalId, areaName, vehicles)
         noVehicles:SetFont("DermaLarge")
         noVehicles:SetTextColor(Color(200, 200, 200, 255))
         noVehicles:SetContentAlignment(5)
+    end
+end
+
+-- Vehicle Customization Menu
+function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame)
+    -- Try to get model - either from vehicleData.model or by creating the entity
+    local modelPath = vehicleData.model
+    local testModel = nil
+    
+    -- If no model specified (LVS/Simfphys vehicles don't store model in DB)
+    -- spawn without customization
+    if not modelPath or modelPath == "" then
+        net.Start("ReqSystem_SpawnVehicle")
+        net.WriteInt(terminalId, 32)
+        net.WriteInt(vehicleData.id, 32)
+        net.WriteInt(0, 8)
+        net.WriteTable({})
+        net.SendToServer()
+        parentFrame:Close()
+        return
+    end
+    
+    -- Create a clientside model to check skins and bodygroups
+    testModel = ClientsideModel(modelPath, RENDERGROUP_OTHER)
+    if not IsValid(testModel) then
+        -- Model failed to load, spawn without customization
+        net.Start("ReqSystem_SpawnVehicle")
+        net.WriteInt(terminalId, 32)
+        net.WriteInt(vehicleData.id, 32)
+        net.WriteInt(0, 8)
+        net.WriteTable({})
+        net.SendToServer()
+        parentFrame:Close()
+        return
+    end
+    
+    -- Get skin and bodygroup info
+    local numSkins = testModel:SkinCount()
+    local bodygroups = {}
+    
+    for i = 0, testModel:GetNumBodyGroups() - 1 do
+        local bgName = testModel:GetBodygroupName(i)
+        local bgCount = testModel:GetBodygroupCount(i)
+        
+        -- Only add bodygroups with more than 1 option
+        if bgCount > 1 then
+            table.insert(bodygroups, {
+                id = i,
+                name = bgName,
+                count = bgCount
+            })
+        end
+    end
+    
+    testModel:Remove()
+    
+    -- If no customization options, spawn directly
+    if numSkins <= 1 and #bodygroups == 0 then
+        net.Start("ReqSystem_SpawnVehicle")
+        net.WriteInt(terminalId, 32)
+        net.WriteInt(vehicleData.id, 32)
+        net.WriteInt(0, 8)
+        net.WriteTable({})
+        net.SendToServer()
+        parentFrame:Close()
+        return
+    end
+    
+    -- Create customization frame
+    local customFrame = vgui.Create("DFrame")
+    customFrame:SetSize(500, 300 + (#bodygroups * 40))
+    customFrame:Center()
+    customFrame:SetTitle("")
+    customFrame:SetVisible(true)
+    customFrame:SetDraggable(true)
+    customFrame:ShowCloseButton(false)
+    customFrame:MakePopup()
+    
+    customFrame.Paint = function(self, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, Color(25, 25, 30, 250))
+        draw.RoundedBoxEx(8, 0, 0, w, 40, Color(35, 100, 180, 255), true, true, false, false)
+        draw.RoundedBox(0, 0, 35, w, 5, Color(45, 120, 200, 255))
+        draw.SimpleText("Customize: " .. vehicleData.name, "DermaLarge", 15, 12, Color(255, 255, 255, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    end
+    
+    -- Close button
+    local closeBtn = vgui.Create("DButton", customFrame)
+    closeBtn:SetSize(30, 30)
+    closeBtn:SetPos(customFrame:GetWide() - 35, 5)
+    closeBtn:SetText("")
+    closeBtn.Paint = function(self, w, h)
+        local col = Color(180, 50, 50, 200)
+        if self:IsHovered() then col = Color(220, 60, 60, 255) end
+        draw.RoundedBox(4, 0, 0, w, h, col)
+        draw.SimpleText("✕", "DermaLarge", w/2, h/2, Color(255, 255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    closeBtn.DoClick = function()
+        customFrame:Close()
+    end
+    
+    local scroll = vgui.Create("DScrollPanel", customFrame)
+    scroll:Dock(FILL)
+    scroll:DockMargin(10, 50, 10, 70)
+    
+    local selectedSkin = 0
+    local selectedBodygroups = {}
+    
+    local y = 10
+    
+    -- Skin selector
+    if numSkins > 1 then
+        local skinLabel = vgui.Create("DLabel", scroll)
+        skinLabel:SetPos(10, y)
+        skinLabel:SetText("Skin:")
+        skinLabel:SetFont("DermaDefaultBold")
+        skinLabel:SetTextColor(Color(255, 255, 255, 255))
+        skinLabel:SizeToContents()
+        y = y + 25
+        
+        local skinSlider = vgui.Create("DNumSlider", scroll)
+        skinSlider:SetPos(10, y)
+        skinSlider:SetSize(460, 30)
+        skinSlider:SetText("")
+        skinSlider:SetMin(0)
+        skinSlider:SetMax(numSkins - 1)
+        skinSlider:SetDecimals(0)
+        skinSlider:SetValue(0)
+        skinSlider.OnValueChanged = function(self, val)
+            selectedSkin = math.floor(val)
+        end
+        y = y + 40
+    end
+    
+    -- Bodygroup selectors
+    for _, bg in ipairs(bodygroups) do
+        selectedBodygroups[bg.id] = 0
+        
+        local bgLabel = vgui.Create("DLabel", scroll)
+        bgLabel:SetPos(10, y)
+        bgLabel:SetText("Bodygroup: " .. bg.name)
+        bgLabel:SetFont("DermaDefaultBold")
+        bgLabel:SetTextColor(Color(255, 255, 255, 255))
+        bgLabel:SizeToContents()
+        y = y + 25
+        
+        local bgSlider = vgui.Create("DNumSlider", scroll)
+        bgSlider:SetPos(10, y)
+        bgSlider:SetSize(460, 30)
+        bgSlider:SetText("")
+        bgSlider:SetMin(0)
+        bgSlider:SetMax(bg.count - 1)
+        bgSlider:SetDecimals(0)
+        bgSlider:SetValue(0)
+        bgSlider.OnValueChanged = function(self, val)
+            selectedBodygroups[bg.id] = math.floor(val)
+        end
+        y = y + 40
+    end
+    
+    -- Spawn button
+    local spawnBtn = vgui.Create("DButton", customFrame)
+    spawnBtn:Dock(BOTTOM)
+    spawnBtn:SetTall(50)
+    spawnBtn:DockMargin(10, 0, 10, 10)
+    spawnBtn:SetText("")
+    
+    spawnBtn.Paint = function(self, w, h)
+        local col = Color(40, 120, 200, 220)
+        if self:IsHovered() then
+            col = Color(50, 140, 220, 255)
+        end
+        draw.RoundedBox(6, 0, 0, w, h, col)
+        draw.SimpleText("Spawn Vehicle", "DermaLarge", w/2, h/2, Color(255, 255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    
+    spawnBtn.DoClick = function()
+        -- Send spawn request with customization
+        net.Start("ReqSystem_SpawnVehicle")
+        net.WriteInt(terminalId, 32)
+        net.WriteInt(vehicleData.id, 32)
+        net.WriteInt(selectedSkin, 8)
+        net.WriteTable(selectedBodygroups)
+        net.SendToServer()
+        
+        customFrame:Close()
+        parentFrame:Close()
     end
 end
 
