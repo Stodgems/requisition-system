@@ -35,6 +35,7 @@ ReqSystem.Areas = ReqSystem.Areas or {}
 ReqSystem.Terminals = ReqSystem.Terminals or {}
 ReqSystem.Vehicles = ReqSystem.Vehicles or {}
 ReqSystem.TerminalVehicles = ReqSystem.TerminalVehicles or {}
+ReqSystem.RuntimeTerminalCounter = ReqSystem.RuntimeTerminalCounter or 0
 
 -- Initialize database
 function ReqSystem:InitializeDatabase()
@@ -94,6 +95,10 @@ function ReqSystem:InitializeDatabase()
     
     -- Add key_values column if it doesn't exist (for existing databases)
     sql.Query(string.format("ALTER TABLE %s ADD COLUMN key_values TEXT", vehiclesTable))
+
+    -- Add model and name columns to terminals if they don't exist (for existing databases)
+    sql.Query(string.format("ALTER TABLE %s ADD COLUMN model TEXT", terminalsTable))
+    sql.Query(string.format("ALTER TABLE %s ADD COLUMN name TEXT", terminalsTable))
     
     -- Create terminal_vehicles junction table
     sql.Query(string.format([[
@@ -117,11 +122,24 @@ function ReqSystem:InitializeDatabase()
             ang_r REAL NOT NULL,
             area_id INTEGER,
             model TEXT,
-            terminal_id INTEGER,
+            name TEXT,
             created_at INTEGER
         )
     ]])
-    
+
+    -- Create saved_terminal_vehicles junction table
+    sql.Query([[
+        CREATE TABLE IF NOT EXISTS requisition_saved_terminal_vehicles (
+            saved_terminal_id INTEGER NOT NULL,
+            vehicle_id INTEGER NOT NULL,
+            PRIMARY KEY (saved_terminal_id, vehicle_id)
+        )
+    ]])
+
+    -- Add model and name columns to saved_terminals if they don't exist (for existing databases)
+    sql.Query("ALTER TABLE requisition_saved_terminals ADD COLUMN model TEXT")
+    sql.Query("ALTER TABLE requisition_saved_terminals ADD COLUMN name TEXT")
+
     -- Database initialized
 end
 
@@ -154,9 +172,9 @@ function ReqSystem:LoadTerminals()
     local terminalsTable = self.Config.Tables.terminals
     local query = string.format("SELECT * FROM %s", terminalsTable)
     local results = sql.Query(query)
-    
+
     self.Terminals = {}
-    
+
     if results then
         for _, row in ipairs(results) do
             local terminalData = {
@@ -164,6 +182,8 @@ function ReqSystem:LoadTerminals()
                 pos = Vector(tonumber(row.pos_x), tonumber(row.pos_y), tonumber(row.pos_z)),
                 ang = Angle(tonumber(row.ang_p), tonumber(row.ang_y), tonumber(row.ang_r)),
                 area_id = tonumber(row.area_id),
+                model = row.model,
+                name = row.name,
                 created_at = tonumber(row.created_at)
             }
             self.Terminals[terminalData.id] = terminalData
@@ -260,89 +280,176 @@ end
 -- Register a terminal (called by entity)
 function ReqSystem:RegisterTerminal(pos, ang, areaId)
     local terminalsTable = self.Config.Tables.terminals
-    
+
+    -- Get the last terminal ID to generate the next terminal number
+    local countQuery = string.format("SELECT COUNT(*) as count FROM %s", terminalsTable)
+    local countResult = sql.Query(countQuery)
+    local terminalNumber = 1
+    if countResult and countResult[1] then
+        terminalNumber = tonumber(countResult[1].count) + 1
+    end
+
+    -- Generate default name
+    local defaultName = "Terminal #" .. terminalNumber
+    local defaultModel = self.Config.TerminalSettings.default_model
+
     local query = string.format([[
-        INSERT INTO %s (pos_x, pos_y, pos_z, ang_p, ang_y, ang_r, area_id, created_at)
-        VALUES (%f, %f, %f, %f, %f, %f, %d, %d)
+        INSERT INTO %s (pos_x, pos_y, pos_z, ang_p, ang_y, ang_r, area_id, model, name, created_at)
+        VALUES (%f, %f, %f, %f, %f, %f, %d, %s, %s, %d)
     ]], terminalsTable,
         pos.x, pos.y, pos.z,
         ang.p, ang.y, ang.r,
         areaId or 0,
+        sql.SQLStr(defaultModel),
+        sql.SQLStr(defaultName),
         os.time()
     )
-    
+
     local result = sql.Query(query)
     if result == false then
         -- Error registering terminal
         return nil
     end
-    
+
     -- Get the last inserted ID
     local idQuery = string.format("SELECT last_insert_rowid() as id")
     local idResult = sql.Query(idQuery)
-    
+
     if idResult and idResult[1] then
         local terminalId = tonumber(idResult[1].id)
         self:LoadTerminals()
         return terminalId
     end
-    
+
     return nil
 end
 
+-- Create a runtime terminal (not saved to database, only exists until server restart)
+function ReqSystem:CreateRuntimeTerminal(pos, ang, areaId, model)
+    -- Generate a runtime ID (negative to avoid conflicts with database IDs)
+    self.RuntimeTerminalCounter = self.RuntimeTerminalCounter + 1
+    local runtimeId = -self.RuntimeTerminalCounter
+
+    -- Get terminal count for default name
+    local terminalNumber = table.Count(self.Terminals) + 1
+    local defaultName = "Terminal #" .. terminalNumber
+
+    -- Create terminal data in memory only
+    self.Terminals[runtimeId] = {
+        id = runtimeId,
+        pos = pos,
+        ang = ang,
+        area_id = areaId or 0,
+        model = model or self.Config.TerminalSettings.default_model,
+        name = defaultName,
+        created_at = os.time(),
+        is_runtime = true  -- Flag to identify runtime terminals
+    }
+
+    -- Sync to clients
+    self:SyncTerminalsToClients()
+
+    return runtimeId
+end
+
+-- Remove a runtime terminal from memory
+function ReqSystem:RemoveRuntimeTerminal(terminalId)
+    if self.Terminals[terminalId] and self.Terminals[terminalId].is_runtime then
+        -- Remove terminal data
+        self.Terminals[terminalId] = nil
+
+        -- Remove terminal vehicle associations
+        self.TerminalVehicles[terminalId] = nil
+
+        -- Sync to clients
+        self:SyncTerminalsToClients()
+
+        net.Start("ReqSystem_SendTerminalData")
+        net.WriteTable(self.TerminalVehicles)
+        net.Broadcast()
+    end
+end
+
 -- Update terminal configuration
-function ReqSystem:UpdateTerminal(terminalId, areaId, vehicleIds)
-    local terminalsTable = self.Config.Tables.terminals
-    local terminalVehiclesTable = self.Config.Tables.terminal_vehicles
-    
-    -- Update area assignment
-    local query = string.format("UPDATE %s SET area_id = %d WHERE id = %d",
-        terminalsTable, areaId or 0, terminalId)
-    sql.Query(query)
-    
-    -- Clear existing vehicle assignments
-    local deleteQuery = string.format("DELETE FROM %s WHERE terminal_id = %d",
-        terminalVehiclesTable, terminalId)
-    sql.Query(deleteQuery)
-    
-    -- Add new vehicle assignments
+function ReqSystem:UpdateTerminal(terminalId, areaId, vehicleIds, model, name)
+    local terminal = self.Terminals[terminalId]
+    if not terminal then return end
+
+    -- Update in-memory terminal data
+    terminal.area_id = areaId or 0
+    terminal.model = model or terminal.model
+    terminal.name = name or terminal.name
+
+    -- Update vehicle associations in memory
+    self.TerminalVehicles[terminalId] = {}
     if vehicleIds then
         for _, vehicleId in ipairs(vehicleIds) do
-            local insertQuery = string.format([[
-                INSERT INTO %s (terminal_id, vehicle_id)
-                VALUES (%d, %d)
-            ]], terminalVehiclesTable, terminalId, vehicleId)
-            sql.Query(insertQuery)
+            self.TerminalVehicles[terminalId][vehicleId] = true
         end
     end
-    
-    self:LoadTerminals()
-    self:LoadTerminalVehicles()
+
+    -- If it's a saved terminal, also update the saved_terminals table
+    if terminal.is_saved then
+        local mapName = game.GetMap()
+
+        -- Use default model if model is not provided or empty
+        local finalModel = model
+        if not finalModel or finalModel == "" then
+            finalModel = self.Config.TerminalSettings.default_model
+        end
+
+        -- Update saved terminal
+        local query = string.format([[
+            UPDATE requisition_saved_terminals
+            SET area_id = %d, model = %s, name = %s
+            WHERE id = %d AND map_name = %s
+        ]], areaId or 0, sql.SQLStr(finalModel), sql.SQLStr(name or ""), terminalId, sql.SQLStr(mapName))
+        sql.Query(query)
+
+        -- Clear existing vehicle assignments
+        sql.Query(string.format("DELETE FROM requisition_saved_terminal_vehicles WHERE saved_terminal_id = %d", terminalId))
+
+        -- Add new vehicle assignments
+        if vehicleIds then
+            for _, vehicleId in ipairs(vehicleIds) do
+                local vehQuery = string.format([[
+                    INSERT INTO requisition_saved_terminal_vehicles (saved_terminal_id, vehicle_id)
+                    VALUES (%d, %d)
+                ]], terminalId, vehicleId)
+                sql.Query(vehQuery)
+            end
+        end
+    end
+
+    -- Sync to clients
+    self:SyncTerminalsToClients()
+
+    net.Start("ReqSystem_SendTerminalData")
+    net.WriteTable(self.TerminalVehicles)
+    net.Broadcast()
 end
 
 -- Delete a terminal
 function ReqSystem:DeleteTerminal(terminalId)
-    local terminalsTable = self.Config.Tables.terminals
-    local terminalVehiclesTable = self.Config.Tables.terminal_vehicles
-    
-    -- Delete vehicle assignments
-    sql.Query(string.format("DELETE FROM %s WHERE terminal_id = %d", terminalVehiclesTable, terminalId))
-    
-    -- Delete terminal
-    sql.Query(string.format("DELETE FROM %s WHERE id = %d", terminalsTable, terminalId))
-    
-    -- Delete from saved terminals
-    sql.Query(string.format("DELETE FROM requisition_saved_terminals WHERE terminal_id = %d", terminalId))
-    
+    local terminal = self.Terminals[terminalId]
+
+    -- Delete from saved terminals and saved terminal vehicles
+    local mapName = game.GetMap()
+    sql.Query(string.format("DELETE FROM requisition_saved_terminals WHERE id = %d AND map_name = %s",
+        terminalId, sql.SQLStr(mapName)))
+    sql.Query(string.format("DELETE FROM requisition_saved_terminal_vehicles WHERE saved_terminal_id = %d", terminalId))
+
+    -- Remove from in-memory data
+    self.Terminals[terminalId] = nil
+    self.TerminalVehicles[terminalId] = nil
+
     -- Remove any terminal entities with this ID
     for _, ent in ipairs(ents.FindByClass("req_terminal")) do
         if IsValid(ent) and ent:GetNWInt("ReqSystem_TerminalID", 0) == terminalId then
             ent:Remove()
         end
     end
-    
-    self:LoadTerminals()
-    self:LoadTerminalVehicles()
+
     self:SyncTerminalsToClients()
 end
 
@@ -480,13 +587,22 @@ hook.Add("Initialize", "ReqSystem_Initialize", function()
     ReqSystem:LoadTerminals()
     ReqSystem:LoadVehicles()
     ReqSystem:LoadTerminalVehicles()
-    
+
+    -- Count saved terminals for this map
+    local mapName = game.GetMap()
+    local query = string.format("SELECT COUNT(*) as count FROM requisition_saved_terminals WHERE map_name = %s", sql.SQLStr(mapName))
+    local result = sql.Query(query)
+    local savedTerminalCount = 0
+    if result and result[1] then
+        savedTerminalCount = tonumber(result[1].count) or 0
+    end
+
     -- Print startup statistics
-    local terminalCount = table.Count(ReqSystem.Terminals)
     local vehicleCount = table.Count(ReqSystem.Vehicles)
     local areaCount = table.Count(ReqSystem.Areas)
-    
-    print("[Requisition System] Loaded: " .. terminalCount .. " terminals, " .. vehicleCount .. " vehicles, " .. areaCount .. " spawn zones")
+
+    print(string.format("[Requisition System] Loaded: %d vehicles, %d spawn zones | Will load %d saved terminals for %s",
+        vehicleCount, areaCount, savedTerminalCount, mapName))
 end)
 
 -- Send data to player on spawn
@@ -531,13 +647,14 @@ end)
 
 net.Receive("ReqSystem_SaveTerminalConfig", function(len, ply)
     if not ReqSystem:IsAdmin(ply) then return end
-    
+
     local terminalId = net.ReadInt(32)
     local areaId = net.ReadInt(32)
     local model = net.ReadString()
+    local name = net.ReadString()
     local vehicleIds = net.ReadTable()
-    
-    ReqSystem:UpdateTerminal(terminalId, areaId, vehicleIds, model)
+
+    ReqSystem:UpdateTerminal(terminalId, areaId, vehicleIds, model, name)
     
     -- Find and update the terminal entity model
     for _, ent in ipairs(ents.FindByClass("req_terminal")) do
@@ -610,83 +727,142 @@ end)
 -- Save all terminals for current map
 function ReqSystem:SaveTerminalsForMap()
     local mapName = game.GetMap()
-    
+
     -- Clear existing saved terminals for this map
     sql.Query(string.format("DELETE FROM requisition_saved_terminals WHERE map_name = %s", sql.SQLStr(mapName)))
-    
+
     local count = 0
+    local terminalEntities = ents.FindByClass("req_terminal")
+
     -- Save all current terminal entities
-    for _, ent in ipairs(ents.FindByClass("req_terminal")) do
+    for _, ent in ipairs(terminalEntities) do
         if IsValid(ent) then
             local terminalId = ent:GetNWInt("ReqSystem_TerminalID", 0)
-            if terminalId > 0 then
+
+            -- Check for both positive and negative IDs (runtime terminals have negative IDs)
+            if terminalId ~= 0 then
                 local terminal = self.Terminals[terminalId]
                 if terminal then
+                    -- Save terminal to saved_terminals table
                     local query = string.format([[
-                        INSERT INTO requisition_saved_terminals 
-                        (map_name, pos_x, pos_y, pos_z, ang_p, ang_y, ang_r, area_id, model, terminal_id, created_at)
-                        VALUES (%s, %f, %f, %f, %f, %f, %f, %d, %s, %d, %d)
-                    ]], 
+                        INSERT INTO requisition_saved_terminals
+                        (map_name, pos_x, pos_y, pos_z, ang_p, ang_y, ang_r, area_id, model, name, created_at)
+                        VALUES (%s, %f, %f, %f, %f, %f, %f, %d, %s, %s, %d)
+                    ]],
                         sql.SQLStr(mapName),
                         ent:GetPos().x, ent:GetPos().y, ent:GetPos().z,
                         ent:GetAngles().p, ent:GetAngles().y, ent:GetAngles().r,
                         terminal.area_id or 0,
                         sql.SQLStr(terminal.model or self.Config.TerminalSettings.default_model),
-                        terminalId,
+                        sql.SQLStr(terminal.name or ""),
                         os.time()
                     )
-                    
+
                     sql.Query(query)
+
+                    -- Get the ID of the newly inserted saved terminal
+                    local idQuery = "SELECT last_insert_rowid() as id"
+                    local idResult = sql.Query(idQuery)
+                    local savedTerminalId = idResult and idResult[1] and tonumber(idResult[1].id)
+
+                    -- Save vehicle associations for ALL terminals (not just runtime)
+                    if savedTerminalId and self.TerminalVehicles[terminalId] then
+                        -- Save vehicle associations to saved_terminal_vehicles table
+                        for vehicleId, _ in pairs(self.TerminalVehicles[terminalId]) do
+                            local vehQuery = string.format([[
+                                INSERT INTO requisition_saved_terminal_vehicles
+                                (saved_terminal_id, vehicle_id)
+                                VALUES (%d, %d)
+                            ]], savedTerminalId, vehicleId)
+                            sql.Query(vehQuery)
+                        end
+                    end
+
                     count = count + 1
                 end
             end
         end
     end
-    
+
     return count
 end
 
 -- Load saved terminals for current map
 function ReqSystem:LoadSavedTerminals()
     local mapName = game.GetMap()
-    
+
     local query = string.format("SELECT * FROM requisition_saved_terminals WHERE map_name = %s", sql.SQLStr(mapName))
     local results = sql.Query(query)
-    
+
     if not results then return 0 end
-    
+
     local count = 0
     for _, row in ipairs(results) do
         local pos = Vector(tonumber(row.pos_x), tonumber(row.pos_y), tonumber(row.pos_z))
         local ang = Angle(tonumber(row.ang_p), tonumber(row.ang_y), tonumber(row.ang_r))
         local model = row.model or self.Config.TerminalSettings.default_model
-        local terminalId = tonumber(row.terminal_id)
-        
-        -- Spawn the terminal
+        local name = row.name or ""
+        local areaId = tonumber(row.area_id) or 0
+        local savedTerminalId = tonumber(row.id)
+
+        -- Create a unique terminal ID using the saved terminal ID
+        -- Use positive IDs to mark these as "saved" terminals
+        local terminalId = savedTerminalId
+
+        -- Create terminal data in memory (not in database - it's already in saved_terminals)
+        self.Terminals[terminalId] = {
+            id = terminalId,
+            pos = pos,
+            ang = ang,
+            area_id = areaId,
+            model = model,
+            name = name,
+            created_at = tonumber(row.created_at) or os.time(),
+            is_saved = true  -- Flag to identify saved terminals
+        }
+
+        -- Load vehicle associations
+        local vehQuery = string.format("SELECT vehicle_id FROM requisition_saved_terminal_vehicles WHERE saved_terminal_id = %d", savedTerminalId)
+        local vehResults = sql.Query(vehQuery)
+
+        if vehResults then
+            self.TerminalVehicles[terminalId] = {}
+            for _, vehRow in ipairs(vehResults) do
+                local vehicleId = tonumber(vehRow.vehicle_id)
+                self.TerminalVehicles[terminalId][vehicleId] = true
+            end
+        end
+
+        -- Spawn the terminal entity
         local terminal = ents.Create("req_terminal")
         if IsValid(terminal) then
             terminal:SetPos(pos)
             terminal:SetAngles(ang)
-            terminal:SetModel(model)
-            
-            -- Mark as auto-loaded to prevent duplicate registration
+
+            -- Mark as auto-loaded to use the saved ID and model
             terminal.ReqSystem_IsAutoLoaded = true
             terminal.ReqSystem_LoadedID = terminalId
-            
+            terminal.ReqSystem_LoadedModel = model
+
             terminal:Spawn()
             terminal:Activate()
-            
-            -- Set the terminal ID immediately after spawn
+
+            -- Set the terminal ID
             timer.Simple(0.1, function()
-                if IsValid(terminal) and self.Terminals[terminalId] then
+                if IsValid(terminal) then
                     terminal:SetNWInt("ReqSystem_TerminalID", terminalId)
                 end
             end)
-            
+
             count = count + 1
         end
     end
-    
+
+    -- Sync to clients after loading all terminals
+    if count > 0 then
+        self:SyncTerminalsToClients()
+    end
+
     return count
 end
 
@@ -762,13 +938,10 @@ hook.Add("InitPostEntity", "ReqSystem_LoadSavedTerminals", function()
     timer.Simple(1, function()
         local cached = ReqSystem:CacheAllVehicleModels()
     end)
-    
+
     -- Then load saved terminals
     timer.Simple(2, function()
-        local count = ReqSystem:LoadSavedTerminals()
-        if count > 0 then
-            print(string.format("[Requisition System] Auto-loaded %d saved terminals for %s", count, game.GetMap()))
-        end
+        ReqSystem:LoadSavedTerminals()
     end)
 end)
 

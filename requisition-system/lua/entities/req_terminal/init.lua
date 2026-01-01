@@ -5,9 +5,9 @@ AddCSLuaFile("shared.lua")
 include("shared.lua")
 
 function ENT:Initialize()
-    -- Use default model from config
-    local defaultModel = ReqSystem.Config.TerminalSettings.default_model
-    self:SetModel(defaultModel)
+    -- Use saved model if available, otherwise use default model from config
+    local model = self.ReqSystem_LoadedModel or ReqSystem.Config.TerminalSettings.default_model
+    self:SetModel(model)
     self:PhysicsInit(SOLID_VPHYSICS)
     self:SetMoveType(MOVETYPE_VPHYSICS)
     self:SetSolid(SOLID_VPHYSICS)
@@ -25,26 +25,15 @@ function ENT:Initialize()
     
     timer.Simple(0.1, function()
         if IsValid(self) then
-            -- Check if this is an auto-loaded terminal
+            -- Check if this is an auto-loaded terminal (from saved terminals)
             if self.ReqSystem_IsAutoLoaded and self.ReqSystem_LoadedID then
-                -- Don't register a new terminal, just use the existing ID
+                -- Use the loaded terminal ID
                 self:SetNWInt("ReqSystem_TerminalID", self.ReqSystem_LoadedID)
             else
-                -- Register as a new terminal
-                local terminalId = ReqSystem:RegisterTerminal(self:GetPos(), self:GetAngles(), 0, defaultModel)
+                -- Create a temporary runtime terminal (not saved to database)
+                local terminalId = ReqSystem:CreateRuntimeTerminal(self:GetPos(), self:GetAngles(), 0, defaultModel)
                 if terminalId then
                     self:SetNWInt("ReqSystem_TerminalID", terminalId)
-                    -- Load saved model if different
-                    local terminal = ReqSystem.Terminals[terminalId]
-                    if terminal and terminal.model and terminal.model ~= "" then
-                        self:SetModel(terminal.model)
-                        self:PhysicsInit(SOLID_VPHYSICS)
-                        self:SetSolid(SOLID_VPHYSICS)
-                        local phys = self:GetPhysicsObject()
-                        if IsValid(phys) then
-                            phys:EnableMotion(false)
-                        end
-                    end
                 end
             end
         end
@@ -76,15 +65,10 @@ function ENT:Use(activator, caller)
 end
 
 function ENT:OnRemove()
-    -- Don't delete the database entry if this is an auto-loaded terminal
-    -- (it will be reloaded on next map start)
-    if self.ReqSystem_IsAutoLoaded then
-        return
-    end
-    
     local terminalId = self:GetNWInt("ReqSystem_TerminalID", 0)
-    if terminalId > 0 then
-        ReqSystem:DeleteTerminal(terminalId)
+    if terminalId < 0 then
+        -- Remove from runtime terminals (only for negative IDs)
+        ReqSystem:RemoveRuntimeTerminal(terminalId)
     end
 end
 
@@ -95,8 +79,8 @@ function ENT:OnPhysgunPickup(ply, phys)
     -- Check if player is holding right-click
     if ply:KeyDown(IN_ATTACK2) then
         local terminalId = self:GetNWInt("ReqSystem_TerminalID", 0)
-        if terminalId > 0 then
-            -- Send terminal admin menu
+        if terminalId ~= 0 then
+            -- Send terminal admin menu (works for both positive and negative IDs)
             net.Start("ReqSystem_OpenTerminalAdmin")
             net.WriteInt(terminalId, 32)
             net.Send(ply)

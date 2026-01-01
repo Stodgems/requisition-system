@@ -202,7 +202,8 @@ function ReqSystem:PopulateTerminalsTab(panel, parentFrame)
         
         local idLabel = vgui.Create("DLabel", card)
         idLabel:SetPos(15, 10)
-        idLabel:SetText("Terminal #" .. id)
+        local displayName = terminal.name and terminal.name ~= "" and terminal.name or ("Terminal #" .. id)
+        idLabel:SetText(displayName)
         idLabel:SetFont("DermaDefaultBold")
         idLabel:SetTextColor(Color(255, 255, 255, 255))
         idLabel:SizeToContents()
@@ -220,14 +221,7 @@ function ReqSystem:PopulateTerminalsTab(panel, parentFrame)
         areaLabel:SetFont("DermaDefault")
         areaLabel:SetTextColor(Color(180, 180, 200, 255))
         areaLabel:SizeToContents()
-        
-        local modelLabel = vgui.Create("DLabel", card)
-        modelLabel:SetPos(350, 30)
-        modelLabel:SetText("Model: " .. (terminal.model or "Default"))
-        modelLabel:SetFont("DermaDefault")
-        modelLabel:SetTextColor(Color(180, 180, 200, 255))
-        modelLabel:SizeToContents()
-        
+
         local editBtn = vgui.Create("DButton", card)
         editBtn:SetPos(860 - 330, 10)
         editBtn:SetSize(100, 60)
@@ -742,9 +736,10 @@ function ReqSystem:OpenTerminalAdminMenu(terminalId)
         draw.RoundedBox(8, 0, 0, w, h, Color(25, 25, 30, 250))
         draw.RoundedBoxEx(8, 0, 0, w, 40, Color(35, 100, 180, 255), true, true, false, false)
         draw.RoundedBox(0, 0, 35, w, 5, Color(45, 120, 200, 255))
-        draw.SimpleText("Terminal Configuration #" .. terminalId, "DermaLarge", 15, 10, Color(255, 255, 255, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        local displayName = terminal.name and terminal.name ~= "" and terminal.name or ("Terminal #" .. terminalId)
+        draw.SimpleText("Terminal Configuration: " .. displayName, "DermaLarge", 15, 10, Color(255, 255, 255, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     end
-    
+
     local closeBtn = vgui.Create("DButton", frame)
     closeBtn:SetSize(30, 30)
     closeBtn:SetPos(frame:GetWide() - 35, 5)
@@ -756,14 +751,30 @@ function ReqSystem:OpenTerminalAdminMenu(terminalId)
         draw.SimpleText("✕", "DermaLarge", w/2, h/2, Color(255, 255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
     closeBtn.DoClick = function() frame:Close() end
-    
+
     local content = vgui.Create("DPanel", frame)
     content:Dock(FILL)
     content:DockMargin(10, 50, 10, 10)
     content.Paint = function(self, w, h)
         draw.RoundedBox(6, 0, 0, w, h, Color(35, 35, 40, 220))
     end
-    
+
+    -- Terminal name
+    local nameLabel = vgui.Create("DLabel", content)
+    nameLabel:Dock(TOP)
+    nameLabel:SetHeight(25)
+    nameLabel:DockMargin(10, 10, 10, 5)
+    nameLabel:SetText("Terminal Name:")
+    nameLabel:SetFont("DermaDefaultBold")
+    nameLabel:SetTextColor(Color(200, 220, 255, 255))
+
+    local nameEntry = vgui.Create("DTextEntry", content)
+    nameEntry:Dock(TOP)
+    nameEntry:SetHeight(30)
+    nameEntry:DockMargin(10, 0, 10, 10)
+    nameEntry:SetValue(terminal.name or "")
+    nameEntry:SetPlaceholderText("e.g., Main Garage Terminal")
+
     -- Area selector
     local areaLabel = vgui.Create("DLabel", content)
     areaLabel:Dock(TOP)
@@ -851,7 +862,7 @@ function ReqSystem:OpenTerminalAdminMenu(terminalId)
     end
     saveBtn.DoClick = function()
         local vehicleIds = {}
-        
+
         -- Get the canvas (inner panel) of the scroll panel
         local canvas = vehicleScroll:GetCanvas()
         if IsValid(canvas) then
@@ -861,19 +872,22 @@ function ReqSystem:OpenTerminalAdminMenu(terminalId)
                 end
             end
         end
-        
+
         local model = modelEntry:GetValue()
         if model == "" then
             model = ReqSystem.Config.TerminalSettings.default_model
         end
-        
+
+        local name = nameEntry:GetValue()
+
         net.Start("ReqSystem_SaveTerminalConfig")
         net.WriteInt(terminalId, 32)
         net.WriteInt(selectedAreaId or 0, 32)
         net.WriteString(model)
+        net.WriteString(name)
         net.WriteTable(vehicleIds)
         net.SendToServer()
-        
+
         frame:Close()
     end
 end

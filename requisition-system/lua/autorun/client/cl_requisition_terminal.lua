@@ -251,18 +251,18 @@ function ReqSystem:OpenTerminalUI(terminalId, areaName, vehicles)
     local y = 0
     for _, vehicle in ipairs(vehicles) do
         local canSpawn, reason = self:PlayerCanSpawnVehicle(LocalPlayer(), vehicle)
-        
+
         local vehicleCard = vgui.Create("DPanel", vehicleList)
         vehicleCard:SetPos(0, y)
         vehicleCard:SetSize(660, 120)
-        
+
         vehicleCard.Paint = function(self, w, h)
             local col = Color(45, 45, 50, 200)
             if self:IsHovered() then
                 col = Color(55, 55, 65, 230)
             end
             draw.RoundedBox(4, 0, 0, w, h, col)
-            
+
             -- Left accent bar
             if canSpawn then
                 draw.RoundedBox(0, 0, 0, 4, h, Color(50, 200, 100, 255))
@@ -270,36 +270,65 @@ function ReqSystem:OpenTerminalUI(terminalId, areaName, vehicles)
                 draw.RoundedBox(0, 0, 0, 4, h, Color(200, 50, 50, 255))
             end
         end
-        
+
+        -- Model preview (small viewer in card)
+        if vehicle.model and vehicle.model ~= "" then
+            local modelPreview = vgui.Create("DModelPanel", vehicleCard)
+            modelPreview:SetPos(10, 10)
+            modelPreview:SetSize(100, 100)
+            modelPreview:SetModel(vehicle.model)
+
+            local previewEnt = modelPreview:GetEntity()
+            if IsValid(previewEnt) then
+                -- Auto-fit camera
+                local mn, mx = previewEnt:GetRenderBounds()
+                local size = 0
+                size = math.max(size, math.abs(mn.x) + math.abs(mx.x))
+                size = math.max(size, math.abs(mn.y) + math.abs(mx.y))
+                size = math.max(size, math.abs(mn.z) + math.abs(mx.z))
+
+                modelPreview:SetFOV(45)
+                modelPreview:SetCamPos(Vector(size, size, size * 0.5))
+                modelPreview:SetLookAt((mn + mx) * 0.5)
+            end
+
+            -- Slow auto-rotation
+            modelPreview.LayoutEntity = function(self, ent)
+                if IsValid(ent) then
+                    ent:SetAngles(Angle(0, CurTime() * 10, 0))
+                end
+            end
+        end
+
         -- Vehicle name
         local nameLabel = vgui.Create("DLabel", vehicleCard)
-        nameLabel:SetPos(15, 10)
+        nameLabel:SetPos(120, 10)
         nameLabel:SetText(vehicle.name)
         nameLabel:SetFont("DermaLarge")
         nameLabel:SetTextColor(Color(255, 255, 255, 255))
         nameLabel:SizeToContents()
-        
+
         -- Requirements
         local reqY = 40
         if vehicle.jobs and #vehicle.jobs > 0 then
             local jobLabel = vgui.Create("DLabel", vehicleCard)
-            jobLabel:SetPos(15, reqY)
+            jobLabel:SetPos(120, reqY)
             jobLabel:SetText("Required Jobs: " .. table.concat(vehicle.jobs, ", "))
             jobLabel:SetFont("DermaDefault")
             jobLabel:SetTextColor(Color(200, 200, 220, 255))
             jobLabel:SizeToContents()
             reqY = reqY + 20
         end
-        
+
         if vehicle.qualifications and #vehicle.qualifications > 0 then
             local qualLabel = vgui.Create("DLabel", vehicleCard)
-            qualLabel:SetPos(15, reqY)
+            qualLabel:SetPos(120, reqY)
             qualLabel:SetText("Required Qualifications: " .. table.concat(vehicle.qualifications, ", "))
             qualLabel:SetFont("DermaDefault")
             qualLabel:SetTextColor(Color(200, 200, 220, 255))
             qualLabel:SizeToContents()
         end
-        
+
         -- Spawn button
         local spawnBtn = vgui.Create("DButton", vehicleCard)
         spawnBtn:SetPos(660 - 120, 10)
@@ -347,12 +376,12 @@ function ReqSystem:OpenTerminalUI(terminalId, areaName, vehicles)
     end
 end
 
--- Vehicle Customization Menu
+-- Vehicle Customization Menu with Model Viewer
 function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame)
     -- Try to get model - either from vehicleData.model or by creating the entity
     local modelPath = vehicleData.model
     local testModel = nil
-    
+
     -- If no model specified (LVS/Simfphys vehicles don't store model in DB)
     -- spawn without customization
     if not modelPath or modelPath == "" then
@@ -365,7 +394,7 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         parentFrame:Close()
         return
     end
-    
+
     -- Create a clientside model to check skins and bodygroups
     testModel = ClientsideModel(modelPath, RENDERGROUP_OTHER)
     if not IsValid(testModel) then
@@ -379,15 +408,15 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         parentFrame:Close()
         return
     end
-    
+
     -- Get skin and bodygroup info
     local numSkins = testModel:SkinCount()
     local bodygroups = {}
-    
+
     for i = 0, testModel:GetNumBodyGroups() - 1 do
         local bgName = testModel:GetBodygroupName(i)
         local bgCount = testModel:GetBodygroupCount(i)
-        
+
         -- Only add bodygroups with more than 1 option
         if bgCount > 1 then
             table.insert(bodygroups, {
@@ -397,9 +426,9 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
             })
         end
     end
-    
+
     testModel:Remove()
-    
+
     -- If no customization options, spawn directly
     if numSkins <= 1 and #bodygroups == 0 then
         net.Start("ReqSystem_SpawnVehicle")
@@ -411,24 +440,24 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         parentFrame:Close()
         return
     end
-    
-    -- Create customization frame
+
+    -- Create customization frame - wider to accommodate model viewer
     local customFrame = vgui.Create("DFrame")
-    customFrame:SetSize(500, 300 + (#bodygroups * 40))
+    customFrame:SetSize(900, 600)
     customFrame:Center()
     customFrame:SetTitle("")
     customFrame:SetVisible(true)
     customFrame:SetDraggable(true)
     customFrame:ShowCloseButton(false)
     customFrame:MakePopup()
-    
+
     customFrame.Paint = function(self, w, h)
         draw.RoundedBox(8, 0, 0, w, h, Color(25, 25, 30, 250))
         draw.RoundedBoxEx(8, 0, 0, w, 40, Color(35, 100, 180, 255), true, true, false, false)
         draw.RoundedBox(0, 0, 35, w, 5, Color(45, 120, 200, 255))
         draw.SimpleText("Customize: " .. vehicleData.name, "DermaLarge", 15, 12, Color(255, 255, 255, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     end
-    
+
     -- Close button
     local closeBtn = vgui.Create("DButton", customFrame)
     closeBtn:SetSize(30, 30)
@@ -443,16 +472,183 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
     closeBtn.DoClick = function()
         customFrame:Close()
     end
-    
-    local scroll = vgui.Create("DScrollPanel", customFrame)
+
+    -- Left panel for controls
+    local leftPanel = vgui.Create("DPanel", customFrame)
+    leftPanel:Dock(LEFT)
+    leftPanel:SetWide(350)
+    leftPanel:DockMargin(10, 50, 5, 10)
+    leftPanel.Paint = function(self, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, Color(35, 35, 40, 220))
+        surface.SetDrawColor(50, 50, 60, 100)
+        surface.DrawOutlinedRect(0, 0, w, h)
+    end
+
+    -- Right panel for model viewer
+    local rightPanel = vgui.Create("DPanel", customFrame)
+    rightPanel:Dock(FILL)
+    rightPanel:DockMargin(5, 50, 10, 10)
+    rightPanel.Paint = function(self, w, h) end
+
+    -- Model viewer header
+    local viewerHeader = vgui.Create("DPanel", rightPanel)
+    viewerHeader:Dock(TOP)
+    viewerHeader:SetTall(30)
+    viewerHeader:DockMargin(0, 0, 0, 5)
+    viewerHeader.Paint = function(self, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, Color(35, 35, 40, 220))
+        draw.SimpleText("Model Preview", "DermaDefaultBold", 10, h/2, Color(200, 220, 255, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    -- Reset view button
+    local resetBtn = vgui.Create("DButton", viewerHeader)
+    resetBtn:Dock(RIGHT)
+    resetBtn:SetWide(100)
+    resetBtn:DockMargin(0, 2, 5, 2)
+    resetBtn:SetText("")
+    resetBtn.Paint = function(self, w, h)
+        local col = Color(60, 80, 120, 200)
+        if self:IsHovered() then col = Color(70, 100, 140, 255) end
+        draw.RoundedBox(4, 0, 0, w, h, col)
+        draw.SimpleText("Reset View", "DermaDefault", w/2, h/2, Color(255, 255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+
+    -- Model viewer
+    local modelViewer = vgui.Create("DModelPanel", rightPanel)
+    modelViewer:Dock(FILL)
+    modelViewer:SetModel(modelPath)
+    modelViewer:SetAnimSpeed(0.5)
+    modelViewer:SetAnimated(false)
+
+    -- Rotation state
+    local rotationYaw = 180
+    local rotationPitch = 0
+    local isDragging = false
+    local lastMouseX, lastMouseY = 0, 0
+
+    -- Auto-fit camera
+    local function ResetCamera()
+        local ent = modelViewer:GetEntity()
+        if IsValid(ent) then
+            local mn, mx = ent:GetRenderBounds()
+            local size = 0
+            size = math.max(size, math.abs(mn.x) + math.abs(mx.x))
+            size = math.max(size, math.abs(mn.y) + math.abs(mx.y))
+            size = math.max(size, math.abs(mn.z) + math.abs(mx.z))
+
+            -- Ensure we have a valid size
+            if size == 0 then size = 50 end
+
+            modelViewer:SetFOV(45)
+            modelViewer:SetCamPos(Vector(size, size, size * 0.5))
+            modelViewer:SetLookAt((mn + mx) * 0.5)
+        end
+    end
+
+    local function ResetRotation()
+        rotationYaw = 180
+        rotationPitch = 0
+    end
+
+    resetBtn.DoClick = function()
+        ResetRotation()
+        ResetCamera()
+    end
+
+    -- Initial camera setup (delayed to ensure entity is created)
+    timer.Simple(0.1, function()
+        if IsValid(modelViewer) then
+            ResetCamera()
+        end
+    end)
+
+    -- Mouse interaction
+    modelViewer.OnMousePressed = function(self, keyCode)
+        if keyCode == MOUSE_LEFT then
+            isDragging = true
+            lastMouseX, lastMouseY = input.GetCursorPos()
+            self:MouseCapture(true)
+        end
+    end
+
+    modelViewer.OnMouseReleased = function(self, keyCode)
+        if keyCode == MOUSE_LEFT then
+            isDragging = false
+            self:MouseCapture(false)
+        end
+    end
+
+    -- Continuous rotation during drag
+    modelViewer.Think = function(self)
+        if isDragging then
+            local mx, my = input.GetCursorPos()
+            local deltaX = mx - lastMouseX
+            local deltaY = my - lastMouseY
+
+            rotationYaw = rotationYaw + deltaX * 0.5
+            rotationPitch = math.Clamp(rotationPitch + deltaY * 0.5, -89, 89)
+
+            lastMouseX = mx
+            lastMouseY = my
+        end
+    end
+
+    -- Apply rotation to entity
+    modelViewer.LayoutEntity = function(self, ent)
+        if IsValid(ent) then
+            ent:SetAngles(Angle(rotationPitch, rotationYaw, 0))
+        end
+    end
+
+    -- Cursor management
+    modelViewer.OnCursorEntered = function(self)
+        self:SetCursor("hand")
+    end
+
+    modelViewer.OnCursorExited = function(self)
+        self:SetCursor("arrow")
+    end
+
+    -- Custom paint to add background
+    local oldPaint = modelViewer.Paint
+    modelViewer.Paint = function(self, w, h)
+        -- Draw background first
+        draw.RoundedBox(6, 0, 0, w, h, Color(35, 35, 40, 220))
+        surface.SetDrawColor(50, 50, 60, 100)
+        surface.DrawOutlinedRect(0, 0, w, h)
+
+        -- Call original paint to render the model
+        oldPaint(self, w, h)
+    end
+
+    -- Function to update model preview
+    local function UpdateModelPreview(skin, bodygroupValues)
+        local ent = modelViewer:GetEntity()
+        if IsValid(ent) then
+            -- Apply skin
+            if skin then
+                ent:SetSkin(skin)
+            end
+
+            -- Apply bodygroups
+            if bodygroupValues then
+                for bgId, bgValue in pairs(bodygroupValues) do
+                    ent:SetBodygroup(bgId, bgValue)
+                end
+            end
+        end
+    end
+
+    -- Controls scroll panel
+    local scroll = vgui.Create("DScrollPanel", leftPanel)
     scroll:Dock(FILL)
-    scroll:DockMargin(10, 50, 10, 70)
-    
+    scroll:DockMargin(10, 10, 10, 60)
+
     local selectedSkin = 0
     local selectedBodygroups = {}
-    
+
     local y = 10
-    
+
     -- Skin selector
     if numSkins > 1 then
         local skinLabel = vgui.Create("DLabel", scroll)
@@ -462,10 +658,10 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         skinLabel:SetTextColor(Color(255, 255, 255, 255))
         skinLabel:SizeToContents()
         y = y + 25
-        
+
         local skinSlider = vgui.Create("DNumSlider", scroll)
         skinSlider:SetPos(10, y)
-        skinSlider:SetSize(460, 30)
+        skinSlider:SetSize(310, 30)
         skinSlider:SetText("")
         skinSlider:SetMin(0)
         skinSlider:SetMax(numSkins - 1)
@@ -473,14 +669,15 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         skinSlider:SetValue(0)
         skinSlider.OnValueChanged = function(self, val)
             selectedSkin = math.floor(val)
+            UpdateModelPreview(selectedSkin, selectedBodygroups)
         end
         y = y + 40
     end
-    
+
     -- Bodygroup selectors
     for _, bg in ipairs(bodygroups) do
         selectedBodygroups[bg.id] = 0
-        
+
         local bgLabel = vgui.Create("DLabel", scroll)
         bgLabel:SetPos(10, y)
         bgLabel:SetText("Bodygroup: " .. bg.name)
@@ -488,10 +685,10 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         bgLabel:SetTextColor(Color(255, 255, 255, 255))
         bgLabel:SizeToContents()
         y = y + 25
-        
+
         local bgSlider = vgui.Create("DNumSlider", scroll)
         bgSlider:SetPos(10, y)
-        bgSlider:SetSize(460, 30)
+        bgSlider:SetSize(310, 30)
         bgSlider:SetText("")
         bgSlider:SetMin(0)
         bgSlider:SetMax(bg.count - 1)
@@ -499,17 +696,18 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         bgSlider:SetValue(0)
         bgSlider.OnValueChanged = function(self, val)
             selectedBodygroups[bg.id] = math.floor(val)
+            UpdateModelPreview(selectedSkin, selectedBodygroups)
         end
         y = y + 40
     end
-    
+
     -- Spawn button
-    local spawnBtn = vgui.Create("DButton", customFrame)
+    local spawnBtn = vgui.Create("DButton", leftPanel)
     spawnBtn:Dock(BOTTOM)
     spawnBtn:SetTall(50)
     spawnBtn:DockMargin(10, 0, 10, 10)
     spawnBtn:SetText("")
-    
+
     spawnBtn.Paint = function(self, w, h)
         local col = Color(40, 120, 200, 220)
         if self:IsHovered() then
@@ -518,7 +716,7 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         draw.RoundedBox(6, 0, 0, w, h, col)
         draw.SimpleText("Spawn Vehicle", "DermaLarge", w/2, h/2, Color(255, 255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
-    
+
     spawnBtn.DoClick = function()
         -- Send spawn request with customization
         net.Start("ReqSystem_SpawnVehicle")
@@ -527,7 +725,7 @@ function ReqSystem:OpenVehicleCustomization(terminalId, vehicleData, parentFrame
         net.WriteInt(selectedSkin, 8)
         net.WriteTable(selectedBodygroups)
         net.SendToServer()
-        
+
         customFrame:Close()
         parentFrame:Close()
     end
